@@ -85,10 +85,11 @@ public class RetryingPathServiceImpl implements PathService {
         // orphan RoutingContexts leaving temporary edges in the graph until GC)
         if (options.rctx == null) {
             options.setRoutingContext(graphService.getGraph(options.getRouterId()));
-            options.rctx.pathParsers = new PathParser[] { new BasicPathParser(),
-                    new NoThruTrafficPathParser() };
+//            options.rctx.pathParsers = new PathParser[] { new BasicPathParser(),
+//                    new NoThruTrafficPathParser() };
+            options.maxTransfers = 100;
         }
-
+        
         long searchBeginTime = System.currentTimeMillis();
         
         // The list of options specifying various modes, banned routes, etc to try for multiple

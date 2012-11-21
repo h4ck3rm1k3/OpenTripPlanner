@@ -29,12 +29,6 @@ import org.opentripplanner.routing.vertextype.StreetVertex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * A heuristic that performs a single-source / all destinations shortest path search backward from
- * the target of the main search, using lower bounds on the weight of each edge.
- * 
- * @author andrewbyrd
- */
 public class BidirectionalRemainingWeightHeuristic implements 
     RemainingWeightHeuristic, RemainingTimeHeuristic {
 
@@ -43,12 +37,12 @@ public class BidirectionalRemainingWeightHeuristic implements
     private static Logger LOG = LoggerFactory.getLogger(LBGRemainingWeightHeuristic.class);
 
     Vertex target;
-    
+
     double cutoff;
 
-    double[] weights;
+    double maxFound = 0;
 
-    int nVertices = 0;
+    double[] weights;
 
     Graph g;
 
@@ -56,6 +50,8 @@ public class BidirectionalRemainingWeightHeuristic implements
 
     private DistanceLibrary distanceLibrary = SphericalDistanceLibrary.getInstance();
 
+    public static int HEAD_START_MSEC = 100;
+    
     /**
      * RemainingWeightHeuristic interface
      */
@@ -67,8 +63,20 @@ public class BidirectionalRemainingWeightHeuristic implements
 
     @Override
     public double computeInitialWeight(State s, Vertex target) {
-        recalculate(s.getVertex(), target, s.getOptions(), false);
-        return computeForwardWeight(s, target);
+        if (target == this.target && s.getOptions().maxWeight <= this.cutoff) {
+            LOG.debug("reusing existing heuristic");
+        } else {
+            LOG.debug("spawning heuristic computation thread");
+            this.target = target;
+            new Thread(new Worker(s)).start();
+//            try {
+//                Thread.sleep(HEAD_START_MSEC);
+//            } catch (InterruptedException e) {
+//                throw new RuntimeException("Langauge specification error: checked exceptions");
+//            }
+//            LOG.debug("the heuristic has a head start. now we start searching.");
+        }
+        return 0;
     }
 
     @Override
@@ -86,41 +94,44 @@ public class BidirectionalRemainingWeightHeuristic implements
         int index = v.getIndex();
         if (index < weights.length) {
             double h = weights[index];
-            if (s.isEverBoarded()) {
-                if (localStreetService != null
-                        && v instanceof StreetVertex
-                        && s.getOptions().getMaxWalkDistance() - s.getWalkDistance() < distanceLibrary
-                                .fastDistance(v.getCoordinate(), target.getCoordinate())
-                        && !localStreetService.transferrable(v)) {
-                    return Double.MAX_VALUE;
-                }
-                if (s.isAlightedLocal() || (!s.isOnboard() && s.getNumBoardings() > s.getOptions().getMaxTransfers())) {
-                    double d = distanceLibrary.fastDistance(v.getCoordinate(),
-                            target.getCoordinate());
-                    if (d > s.getOptions().getMaxWalkDistance() - s.getWalkDistance()) {
-                        return Double.MAX_VALUE;
-                    }
-                    double walk = d / s.getOptions().getSpeedUpperBound();
-                    return Math.max(h, walk);
-                }
-            }
-            // System.out.printf("h=%f at %s\n", h, s.getVertex());
-            // return infinite heuristic values 
-            // so transit boarding is not even attempted useless patterns
-
-            return h;
-            //return h == Double.POSITIVE_INFINITY ? 0 : h;
-            
+            return Double.isInfinite(h) ? maxFound : h;
         } else
             return 0;
     }
 
-    private void recalculate(Vertex origin, Vertex target, RoutingRequest options, boolean timeNotWeight) {
-        if (target != this.target || options.maxWeight > this.cutoff) {
+    @Override
+    public void reset() {
+    }
+
+    /**
+     * RemainingTimeHeuristic interface
+     */
+    @Override
+    public void timeInitialize(State s, Vertex target) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public double timeLowerBound(State s) {
+        return computeReverseWeight(s, null);
+    }
+
+    private /* inner */ class Worker implements Runnable {
+
+        Vertex origin;
+        
+        RoutingRequest options;
+        
+        Worker (State s) {
+            this.options = s.getOptions();
+            this.origin = s.getVertex();
+        }
+        
+        @Override
+        public void run() {
             LOG.debug("recalc");
-            this.target = target;
-            this.cutoff = options.maxWeight;
-            this.nVertices = AbstractVertex.getMaxIndex();
+            cutoff = options.maxWeight;
+            int nVertices = AbstractVertex.getMaxIndex();
             weights = new double[nVertices];
             Arrays.fill(weights, Double.POSITIVE_INFINITY);
             BinHeap<Vertex> q = new BinHeap<Vertex>();
@@ -149,11 +160,13 @@ public class BidirectionalRemainingWeightHeuristic implements
             while (!q.empty()) {
                 double uw = q.peek_min_key();
                 Vertex u = q.extract_min();
-                // cutting off at 2-3 hours seems to improve reaction time
-                // (this was previously not the case... #656?)
-                // of course in production this would be scaled according to the distance
+                maxFound = uw;
                 if (uw > cutoff)
                     break;
+                if (u == origin) { // searching backward from target to origin
+                    LOG.debug("hit origin.");
+                    //break;
+                }
                 int ui = u.getIndex();
                 if (uw > weights[ui])
                     continue;
@@ -165,8 +178,7 @@ public class BidirectionalRemainingWeightHeuristic implements
                 for (Edge e : edges) {
                     Vertex v = options.isArriveBy() ? 
                         e.getToVertex() : e.getFromVertex();
-                    double ew = timeNotWeight ? 
-                           e.timeLowerBound(options) : e.weightLowerBound(options);
+                    double ew = e.weightLowerBound(options);
                     if (ew < 0) {
                         LOG.error("negative edge weight {} qt {}", ew, e);
                         continue;
@@ -180,26 +192,11 @@ public class BidirectionalRemainingWeightHeuristic implements
                         // System.out.println("Insert " + v + " weight " + vw);
                     }
                 }
-            }
+            }            
             LOG.info("End SSSP ({} msec)", System.currentTimeMillis() - t0);
+            
         }
+        
     }
-
-    @Override
-    public void reset() {
-    }
-
-    /**
-     * RemainingTimeHeuristic interface
-     */
-    @Override
-    public void timeInitialize(State s, Vertex target) {
-        recalculate(s.getVertex(), target, s.getOptions(), true);
-    }
-
-    @Override
-    public double timeLowerBound(State s) {
-        return computeReverseWeight(s, null);
-    }
-
+    
 }

@@ -89,6 +89,7 @@ public class GenericAStar implements SPTService { // maybe this should be wrappe
 
         // heuristic calc could actually be done when states are constructed, inside state
         State initialState = new State(options);
+        LOG.debug("state {} target {}", initialState, rctx.target);
         double initialWeight = heuristic.computeInitialWeight(initialState, rctx.target);
         spt.add(initialState);
 

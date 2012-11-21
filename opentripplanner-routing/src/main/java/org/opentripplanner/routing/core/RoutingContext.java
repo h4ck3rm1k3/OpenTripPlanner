@@ -22,6 +22,7 @@ import org.onebusaway.gtfs.model.AgencyAndId;
 import org.onebusaway.gtfs.model.calendar.ServiceDate;
 import org.onebusaway.gtfs.services.calendar.CalendarService;
 import org.opentripplanner.common.model.NamedPlace;
+import org.opentripplanner.routing.algorithm.strategies.BidirectionalRemainingWeightHeuristic;
 import org.opentripplanner.routing.algorithm.strategies.RemainingWeightHeuristic;
 import org.opentripplanner.routing.algorithm.strategies.TrivialRemainingWeightHeuristic;
 import org.opentripplanner.routing.edgetype.TimetableResolver;
@@ -146,7 +147,7 @@ public class RoutingContext implements Cloneable {
         if (opt.batch)
             remainingWeightHeuristic = new TrivialRemainingWeightHeuristic();
         else
-            remainingWeightHeuristic = heuristicFactory.getInstanceForSearch(opt);
+            remainingWeightHeuristic = new BidirectionalRemainingWeightHeuristic(graph);
     }
     
     
